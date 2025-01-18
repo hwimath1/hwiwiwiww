@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>분모가 다른 분수끼리의 나눗셈</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      background: #f9f9f9;
+    }
+    h1, h2, h3 {
+      text-align: center;
+    }
+    #startScreen, #quizScreen, #endScreen {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: white;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      display: none;
+    }
+    #startScreen {
+      display: block; /* 첫 화면 */
+    }
+    .centered {
+      text-align: center;
+    }
+    .energy-bar {
+      width: 100%;
+      height: 20px;
+      background-color: #ddd;
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 10px 0 20px 0;
+    }
+    .energy-fill {
+      height: 100%;
+      background-color: #76c7c0;
+      width: 100%; /* 초기값 */
+    }
+    .optionButton {
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 5px 0;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      cursor: pointer;
+      background: #fafafa;
+    }
+    .optionButton:hover {
+      background: #e6f7ff;
+    }
+    .highlight {
+      color: red;
+      font-weight: bold;
+    }
+    #response {
+      white-space: pre-wrap;
+      background: #fafafa;
+      padding: 10px;
+      margin-top: 10px;
+      border: 1px solid #ccc;
+    }
+    .scoreBoard {
+      margin: 10px 0;
+      text-align: center;
+    }
+    .lives {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+
+    /* 분수 표시(세로 막대)용 */
+    .frac {
+      display: inline-block;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .frac-top {
+      display: block;
+      border-bottom: 1px solid;
+    }
+    .frac-bottom {
+      display: block;
+      font-size: 90%;
+    }
+  </style>
+</head>
+<body>
+
+<h1>분모가 다른 분수끼리의 나눗셈</h1>
+
+<!-- START SCREEN -->
+<div id="startScreen">
+  <h2>이름을 입력하세요</h2>
+  <div class="centered">
+    <input type="text" id="playerName" placeholder="이름" style="font-size:16px; width:200px;" />
+  </div>
+
+  <h3>난이도를 선택하세요</h3>
+  <div class="centered">
+    <select id="difficultySelect" style="font-size:16px;">
+      <option value="top">최상 (20초/문제, +20점)</option>
+      <option value="high">상 (30초/문제, +15점)</option>
+      <option value="mid">중 (40초/문제, +13점)</option>
+      <option value="low">하 (시간 제한 없음, +10점)</option>
+    </select>
+  </div>
+
+  <div class="centered" style="margin-top:20px;">
+    <button onclick="startGame()" style="font-size:18px; padding:10px 20px;">시작하기</button>
+  </div>
+</div>
+
+<!-- QUIZ SCREEN -->
+<div id="quizScreen">
+  <div class="scoreBoard">
+    <div>남은 기회: <span id="lifeCount">3</span></div>
+    <div>현재 점수: <span id="score">0</span></div>
+    <div>전체 경과 시간: <span id="totalTime">0</span>초</div>
+  </div>
+  <div class="energy-bar" id="energyBar" style="display:none;">
+    <div class="energy-fill" id="energyFill"></div>
+  </div>
+  <div id="questionContainer"></div>
+</div>
+
+<!-- END SCREEN -->
+<div id="endScreen">
+  <h2>게임 종료!</h2>
+  <div class="scoreBoard">
+    <p>최종 점수: <span id="finalScore">0</span></p>
+    <p>총 경과 시간: <span id="finalTime">0</span>초</p>
+    <button onclick="sendScore()" style="font-size:18px; padding:10px 20px;">점수 전송</button>
+    <div id="response"></div>
+  </div>
+</div>
+
+<script>
+  // 점수 전송 함수
+  async function saveData(game, name, score, elapsedTime) {
+    const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+
+    const requestData = {
+      game,
+      name,
+      score: parseInt(score, 10),
+      elapsedTime: parseInt(elapsedTime, 10)
+    };
+
+    try {
+      const response = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestData)
+      });
+      const responseData = await response.json();
+
+      if (response.ok) {
+        document.getElementById('response').innerText =
+          "성공: " + JSON.stringify(responseData, null, 2);
+      } else {
+        document.getElementById('response').innerText =
+          "오류: " + JSON.stringify(responseData, null, 2);
+      }
+    } catch (error) {
+      console.error('요청 실패:', error);
+      document.getElementById('response').innerText =
+        "네트워크 오류: " + error.message;
+    }
+  }
+
+  // 총 8세트 × 5문제 = 40문제, "○, □, ◎" 유형 5문제 포함
+  // 문제에서 "아래 식에서 ○, □, ◎에 알맞은 수..." 부분을 전부 포함
+  const allQuestions = [
+    // 1) 우유/하루분 - 5문제
+    {
+      question: "우유 <span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>10</span></span> L가 있고, 하루에 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>20</span></span> L씩 마신다면 며칠 동안 마실 수 있습니까?",
+      options: ["4일","5일","6일","7일"],
+      correct: 2
+    },
+    {
+      question: "우유 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> L가 있고, 하루에 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>8</span></span> L씩 마신다면 며칠 동안 마실 수 있습니까?",
+      options: ["4일","5일","6일","8일"],
+      correct: 2
+    },
+    {
+      question: "그림물감 <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span> 통이 있고, 하루에 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>12</span></span> 통씩 사용한다면 며칠 동안 사용할 수 있습니까?",
+      options: ["9일","10일","11일","12일"],
+      correct: 1
+    },
+    {
+      question: "물 2 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span> L(= <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>2</span></span> L)이 있고, 하루에 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span> L씩 마신다면 며칠 동안 마실 수 있습니까?",
+      options: ["8일","9일","10일","12일"],
+      correct: 2
+    },
+    {
+      question: "사료 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>5</span></span> 포대가 있고, 하루에 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>10</span></span> 포대씩 급여한다면 며칠 동안 먹일 수 있습니까?",
+      options: ["10일","12일","14일","15일"],
+      correct: 2
+    },
+
+    // 2) (5/8) ÷ ? = 1/3 - 5문제
+    {
+      question: "<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>8</span></span> 을 어떤 수로 나눈 몫이 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span> 입니까? (대분수 기약분수)",
+      options: [
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>8</span></span>",
+        "1 <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>8</span></span>",
+        "1 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>8</span></span>",
+        "2 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>8</span></span>"
+      ],
+      correct: 2
+    },
+    {
+      question: "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span> 을 어떤 수로 나눈 몫이 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>6</span></span> 입니까? (대분수 기약분수 또는 정수)",
+      options: [
+        "2 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>",
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>",
+        "4",
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>1</span></span>"
+      ],
+      correct: 2
+    },
+    {
+      question: "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span> (즉 <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>4</span></span>)를 어떤 수로 나눈 몫이 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span> 입니까?",
+      options: [
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>",
+        "2 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>",
+        "3 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>",
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span>"
+      ],
+      correct: 1
+    },
+    {
+      question: "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span> 를 어떤 수로 나눈 몫이 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> 입니까? (기약분수)",
+      options: [
+        "<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>4</span></span>",
+        "<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span>"
+      ],
+      correct: 1
+    },
+    {
+      question: "<span class='frac'><span class='frac-top'>6</span><span class='frac-bottom'>7</span></span> 을 어떤 수로 나눈 몫이 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span> 입니까? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span>",
+        "1 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>7</span></span>",
+        "2 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>"
+      ],
+      correct: 0
+    },
+
+    // 3) 세로 / 넓이 -> 가로 (m<sup>2</sup>) - 5문제
+    {
+      question: "세로가 <span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span> m인 직사각형 텃밭, 넓이가 <span class='frac'><span class='frac-top'>6</span><span class='frac-bottom'>7</span></span> m<sup>2</sup>. 가로는 몇 m? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>14</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>15</span></span>",
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>15</span></span>",
+        "1 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>14</span></span>"
+      ],
+      correct: 0
+    },
+    {
+      question: "세로가 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span> m인 화단, 넓이가 <span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span> m<sup>2</sup>. 가로는 몇 m? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span>"
+      ],
+      correct: 0
+    },
+    {
+      question: "세로가 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> m인 교실 바닥, 넓이가 <span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>8</span></span> m<sup>2</sup>. 가로는 몇 m? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>",
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>",
+        "2"
+      ],
+      correct: 0
+    },
+    {
+      question: "세로가 <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span> m인 간판, 넓이가 <span class='frac'><span class='frac-top'>10</span><span class='frac-bottom'>9</span></span> m<sup>2</sup>. 가로는 몇 m? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>",
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span>",
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>"
+      ],
+      correct: 0
+    },
+    {
+      question: "세로가 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>8</span></span> m인 배너, 넓이가 <span class='frac'><span class='frac-top'>21</span><span class='frac-bottom'>20</span></span> m<sup>2</sup>. 가로는 몇 m? (대분수 기약분수)",
+      options: [
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span>",
+        "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>",
+        "1 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span>"
+      ],
+      correct: 1
+    },
+
+    // 4) "다음 중 계산 결과가 1보다 작은 것" - 5문제
+    {
+      question: "다음 중 계산 결과가 1보다 작은 것은?\n(1) (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span>) * (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>), (2) (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span>), (3) (<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span>) * (<span class='frac'><span class='frac-top'>6</span><span class='frac-bottom'>5</span></span>), (4) (<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>7</span></span>) / (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span>)",
+      options: ["1)","2)","3)","4)"],
+      correct: 0
+    },
+    {
+      question: "다음 중 계산 결과가 1보다 작은 것은?\n(1) (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span>) / (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>), (2) (<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>7</span></span>) / (<span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>14</span></span>), (3) (<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span>) / (<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>8</span></span>), (4) (<span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>10</span></span>) / (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>5</span></span>)",
+      options: ["1)","2)","3)","4)"],
+      correct: 1
+    },
+    {
+      question: "다음 중 계산 결과가 1보다 작은 것은?\n(1) (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>), (2) (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>7</span></span>) * (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>), (3) (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>6</span></span>), (4) (<span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>9</span></span>) * (<span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>7</span></span>)",
+      options: ["1)","2)","3)","4)"],
+      correct: 1
+    },
+    {
+      question: "다음 중 계산 결과가 1보다 작은 것은?\n(1) (<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span>) * (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span>), (2) (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>6</span></span>), (3) (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>8</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span>), (4) (<span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>10</span></span>) * (<span class='frac'><span class='frac-top'>10</span><span class='frac-bottom'>9</span></span>)",
+      options: ["1)","2)","3)","4)"],
+      correct: 0
+    },
+    {
+      question: "다음 중 계산 결과가 1보다 작은 것은?\n(1) (<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span>) / (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span>), (2) (<span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>8</span></span>) * (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>7</span></span>), (3) (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span>) * (<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>3</span></span>), (4) (<span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>11</span></span>) / (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>11</span></span>)",
+      options: ["1)","2)","3)","4)"],
+      correct: 1
+    },
+
+    // 5) “○, □, ◎” 채우기 - 5문제 (두 번째 사진 부분을 전부 포함)
+    {
+      // 문제1 (원본)
+      question: "문제 1 (원본 문제)<br>" +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>7</span></span> 를 계산하려고 합니다.<br>" +
+        "아래 식에서 ○, □, ◎에 알맞은 수를 바르게 구한 것은 어느 것입니까?<br><br>" +
+        "(식) " +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>7</span></span> " +
+        "= ○/□ ÷ ◎/□ " +
+        "= ○/◎ = 1 5/9",
+      options: [
+        "○=9, □=14, ◎=9",
+        "○=9, □=14, ◎=5/9",
+        "○=14, □=9, ◎=9/14",
+        "○=14, □=9, ◎=5/9"
+      ],
+      correct: 3
+    },
+    {
+      // 문제2 (3/4 ÷ 2/7)
+      question: "문제 2<br>" +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span> 를 계산하려고 합니다.<br>" +
+        "아래 식에서 ○, □, ◎에 알맞은 수를 바르게 구한 것은 어느 것입니까?<br><br>" +
+        "(식) " +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span> " +
+        "= ○/□ ÷ ◎/□ " +
+        "= ○/◎ = 1 1/2 (예시)",
+      options: [
+        "○=6,  □=28, ◎=4",
+        "○=6,  □=14, ◎=3",
+        "○=21, □=8,  ◎=6",
+        "○=6,  □=28, ◎=5"
+      ],
+      correct: 0
+    },
+    {
+      // 문제3 (5/6 ÷ 1/4)
+      question: "문제 3<br>" +
+        "<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span> 를 계산하려고 합니다.<br>" +
+        "아래 식에서 ○, □, ◎에 알맞은 수를 바르게 구한 것은 어느 것입니까?<br><br>" +
+        "(식) " +
+        "<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span> " +
+        "= ○/□ ÷ ◎/□ = ○/◎ = 3 1/3 (예시)",
+      options: [
+        "○=5,  □=24, ◎=4",
+        "○=20, □=6,  ◎=24",
+        "○=20, □=24, ◎=6",
+        "○=5,  □=4,  ◎=6"
+      ],
+      correct: 2
+    },
+    {
+      // 문제4 (1/2 ÷ 2/9)
+      question: "문제 4<br>" +
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>9</span></span> 를 계산하려고 합니다.<br>" +
+        "아래 식에서 ○, □, ◎에 알맞은 수를 바르게 구한 것은 어느 것입니까?<br><br>" +
+        "(식) " +
+        "<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>2</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>9</span></span> " +
+        "= ○/□ ÷ ◎/□ = ○/◎ = 2 1/4 (예시)",
+      options: [
+        "○=9,  □=18, ◎=4",
+        "○=1,  □=2,  ◎=2",
+        "○=9,  □=2,  ◎=4",
+        "○=2,  □=9,  ◎=4"
+      ],
+      correct: 2
+    },
+    {
+      // 문제5 (4/5 ÷ 3/10)
+      question: "문제 5<br>" +
+        "<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>10</span></span> 를 계산하려고 합니다.<br>" +
+        "아래 식에서 ○, □, ◎에 알맞은 수를 바르게 구한 것은 어느 것입니까?<br><br>" +
+        "(식) " +
+        "<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>5</span></span> ÷ " +
+        "<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>10</span></span> " +
+        "= ○/□ ÷ ◎/□ = ○/◎ = 2 2/3",
+      options: [
+        "○=8,  □=25, ◎=3",
+        "○=12, □=10, ◎=8",
+        "○=8,  □=10, ◎=3",
+        "○=8,  □=30, ◎=2"
+      ],
+      correct: 2
+    },
+
+    // 6) "다음 중 계산 결과가 알맞지 않은 것?" - 5문제
+    {
+      question: "다음 중 계산 결과가 알맞지 않은 것은?\n(1) (3/4) ÷ (2/5) = 1 7/8, (2) (5/6) ÷ (3/5) = 1 7/15, (3) (6/7) ÷ (9/14) = 1 1/3, (4) (2/3) ÷ (1/4) = 2 2/3",
+      options: ["1)","2)","3)","4)"],
+      correct: 1
+    },
+    {
+      question: "다음 중 계산 결과가 알맞지 않은 것은?\n(1) (4/5) ÷ (1/2) = 1 3/5, (2) (2/3) ÷ (1/3) = 2, (3) (3/7) ÷ (1/7) = 3, (4) (3/5) ÷ (1/10) = 5",
+      options: ["1)","2)","3)","4)"],
+      correct: 3
+    },
+    {
+      question: "다음 중 계산 결과가 알맞지 않은 것은?\n(1) (5/8) ÷ (1/4) = 2 1/2, (2) (3/4) ÷ (1/4) = 3, (3) (2/3) ÷ (3/4) = 8/9, (4) (5/6) ÷ (5/12) = 2 1/2",
+      options: ["1)","2)","3)","4)"],
+      correct: 3
+    },
+    {
+      question: "다음 중 계산 결과가 알맞지 않은 것은?\n(1) (7/9) ÷ (1/6) = 4 2/3, (2) (3/5) ÷ (2/7) = 2 1/10, (3) (1/2) ÷ (1/3) = 1 1/2, (4) (5/12) ÷ (5/6) = 2",
+      options: ["1)","2)","3)","4)"],
+      correct: 3
+    },
+    {
+      question: "다음 중 계산 결과가 알맞지 않은 것은?\n(1) (6/7) ÷ (1/14) = 12, (2) (4/5) ÷ (2/5) = 2, (3) (3/8) ÷ (3/4) = 1/2, (4) (5/9) ÷ (5/6) = 3/4",
+      options: ["1)","2)","3)","4)"],
+      correct: 3
+    },
+
+    // 7) “A는 B의 몇 배인가?” - 5문제
+    {
+      question: "주스는 <span class='frac'><span class='frac-top'>9</span><span class='frac-bottom'>11</span></span> L가 있고, 우유는 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>22</span></span> L가 있습니다. 주스는 우유의 몇 배입니까?",
+      options: ["4","5","6","7"],
+      correct: 2
+    },
+    {
+      question: "물은 <span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>4</span></span> L가 있고, 우유는 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>8</span></span> L가 있습니다. 물은 우유의 몇 배입니까?",
+      options: ["4","5","6","7"],
+      correct: 2
+    },
+    {
+      question: "사료는 <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span> kg가 있고, 건초는 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>6</span></span> kg가 있습니다. 사료는 건초의 몇 배입니까?",
+      options: ["3","4","5","6"],
+      correct: 2
+    },
+    {
+      question: "길이가 2 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>3</span></span> m(= <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>3</span></span> m)인 철근, 길이가 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>9</span></span> m인 철근. 앞 철근은 뒤 철근의 몇 배입니까?",
+      options: ["1","2","3","4"],
+      correct: 2
+    },
+    {
+      question: "양초는 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>8</span></span> 개가 있고, 초콜릿은 <span class='frac'><span class='frac-top'>7</span><span class='frac-bottom'>16</span></span> 개가 있습니다. 양초는 초콜릿의 몇 배입니까?",
+      options: ["1","2","3","4"],
+      correct: 1
+    },
+
+    // 8) "a/b ÷ c/d = ?" - 5문제
+    {
+      question: "다음 식의 계산 결과는 어느 것입니까? (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>5</span></span>) ÷ (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>7</span></span>)",
+      options: [
+        "5 1/6",
+        "2 1/10",
+        "<span class='frac'><span class='frac-top'>6</span><span class='frac-bottom'>35</span></span>",
+        "<span class='frac'><span class='frac-top'>10</span><span class='frac-bottom'>21</span></span>"
+      ],
+      correct: 1
+    },
+    {
+      question: "(<span class='frac'><span class='frac-top'>4</span><span class='frac-bottom'>7</span></span>) ÷ (<span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>14</span></span>) 의 계산 결과는 어느 것입니까?",
+      options: [
+        "7 3/7",
+        "8",
+        "4 1/14",
+        "2 3/7"
+      ],
+      correct: 1
+    },
+    {
+      question: "1 <span class='frac'><span class='frac-top'>1</span><span class='frac-bottom'>4</span></span> (= <span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>4</span></span>) ÷ (<span class='frac'><span class='frac-top'>3</span><span class='frac-bottom'>8</span></span>) 의 계산 결과는 어느 것입니까?",
+      options: [
+        "2 1/3",
+        "3 1/4",
+        "3 1/3",
+        "2 2/3"
+      ],
+      correct: 2
+    },
+    {
+      question: "(<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>) ÷ (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>9</span></span>) 의 계산 결과는 어느 것입니까?",
+      options: [
+        "3 1/3",
+        "3",
+        "4",
+        "2 2/3"
+      ],
+      correct: 1
+    },
+    {
+      question: "(<span class='frac'><span class='frac-top'>5</span><span class='frac-bottom'>6</span></span>) ÷ (<span class='frac'><span class='frac-top'>2</span><span class='frac-bottom'>3</span></span>) 의 계산 결과는 어느 것입니까?",
+      options: [
+        "1 1/6",
+        "1 1/4",
+        "1 2/5",
+        "1 1/2"
+      ],
+      correct: 1
+    }
+  ];
+
+  // 전역 변수들
+  let shuffledQuestions = [];
+  let currentQuestionIndex = 0;
+  let score = 0;
+  let lives = 3;
+  let totalTime = 0;
+  let intervalID = null;
+  let questionTimerID = null;
+  let questionTimeLimit = 0;
+  let questionTimeLeft = 0;
+  let pointsPerQuestion = 0;
+
+  // 난이도 선택 후 게임 시작
+  function startGame() {
+    const name = document.getElementById("playerName").value.trim();
+    if(!name) {
+      alert("이름을 입력해주세요.");
+      return;
+    }
+    const difficulty = document.getElementById("difficultySelect").value;
+    switch(difficulty) {
+      case "top":
+        questionTimeLimit = 20; // 최상
+        pointsPerQuestion = 20;
+        break;
+      case "high":
+        questionTimeLimit = 30; // 상
+        pointsPerQuestion = 15;
+        break;
+      case "mid":
+        questionTimeLimit = 40; // 중
+        pointsPerQuestion = 13;
+        break;
+      case "low":
+        questionTimeLimit = 0;  // 하 (무제한)
+        pointsPerQuestion = 10;
+        break;
+    }
+
+    document.getElementById("startScreen").style.display = "none";
+    document.getElementById("quizScreen").style.display = "block";
+
+    // 문제 배열 무작위 셔플
+    shuffledQuestions = shuffleArray([...allQuestions]);
+    currentQuestionIndex = 0;
+    score = 0;
+    lives = 3;
+    totalTime = 0;
+    document.getElementById("score").textContent = score;
+    document.getElementById("lifeCount").textContent = lives;
+    document.getElementById("totalTime").textContent = totalTime;
+
+    // 전체 경과 시간 타이머
+    intervalID = setInterval(() => {
+      totalTime++;
+      document.getElementById("totalTime").textContent = totalTime;
+    }, 1000);
+
+    loadQuestion();
+  }
+
+  // 문제 로드
+  function loadQuestion() {
+    if(lives <= 0 || currentQuestionIndex >= shuffledQuestions.length) {
+      endGame();
+      return;
+    }
+    const qData = shuffledQuestions[currentQuestionIndex];
+    const qContainer = document.getElementById("questionContainer");
+    qContainer.innerHTML = `
+      <div style="font-size:18px; margin-bottom:10px; white-space:pre-line;">
+        ${qData.question}
+      </div>
+    `;
+
+    // 보기 출력
+    qData.options.forEach((opt, idx) => {
+      const btn = document.createElement("button");
+      btn.className = "optionButton";
+      btn.innerHTML = opt;
+      btn.onclick = () => checkAnswer(idx);
+      qContainer.appendChild(btn);
+    });
+
+    // 난이도별 시간
+    if(questionTimeLimit > 0) {
+      document.getElementById("energyBar").style.display = "block";
+      questionTimeLeft = questionTimeLimit;
+      updateEnergyBar();
+      if(questionTimerID) clearInterval(questionTimerID);
+      questionTimerID = setInterval(() => {
+        questionTimeLeft--;
+        updateEnergyBar();
+        if(questionTimeLeft <= 0) {
+          clearInterval(questionTimerID);
+          timeIsUp();
+        }
+      }, 1000);
+    } else {
+      // 하 난이도
+      document.getElementById("energyBar").style.display = "none";
+    }
+  }
+
+  // 에너지바 갱신
+  function updateEnergyBar() {
+    const fill = document.getElementById("energyFill");
+    if(questionTimeLimit > 0) {
+      const percent = (questionTimeLeft / questionTimeLimit) * 100;
+      fill.style.width = percent + "%";
+    }
+  }
+
+  // 시간 초과
+  function timeIsUp() {
+    lives--;
+    document.getElementById("lifeCount").textContent = lives;
+    showCorrectAnswer();
+    if(lives <= 0) {
+      endGame();
+    } else {
+      currentQuestionIndex++;
+      setTimeout(loadQuestion, 1500);
+    }
+  }
+
+  // 정답 체크
+  function checkAnswer(choiceIndex) {
+    if(questionTimerID) clearInterval(questionTimerID);
+
+    const qData = shuffledQuestions[currentQuestionIndex];
+    const correctIndex = qData.correct;
+    if(choiceIndex === correctIndex) {
+      // 맞음
+      score += pointsPerQuestion;
+      document.getElementById("score").textContent = score;
+      showFeedback(true);
+    } else {
+      // 틀림
+      lives--;
+      document.getElementById("lifeCount").textContent = lives;
+      showFeedback(false);
+      showCorrectAnswer();
+    }
+    currentQuestionIndex++;
+
+    if(lives <= 0) {
+      setTimeout(endGame, 1500);
+    } else {
+      setTimeout(loadQuestion, 1500);
+    }
+  }
+
+  // 피드백
+  function showFeedback(isCorrect) {
+    const qContainer = document.getElementById("questionContainer");
+    if(isCorrect) {
+      qContainer.insertAdjacentHTML("beforeend",
+        `<div class="highlight">정답입니다!</div>`);
+    } else {
+      qContainer.insertAdjacentHTML("beforeend",
+        `<div class="highlight">틀렸습니다...</div>`);
+    }
+  }
+
+  // 정답 표시
+  function showCorrectAnswer() {
+    const qData = shuffledQuestions[currentQuestionIndex];
+    const correctText = qData.options[qData.correct];
+    const qContainer = document.getElementById("questionContainer");
+    qContainer.insertAdjacentHTML("beforeend",
+      `<div style="color:blue; margin-top:5px;">정답: ${correctText}</div>`);
+  }
+
+  // 게임 종료
+  function endGame() {
+    if(intervalID) clearInterval(intervalID);
+    if(questionTimerID) clearInterval(questionTimerID);
+    document.getElementById("quizScreen").style.display = "none";
+    document.getElementById("endScreen").style.display = "block";
+    document.getElementById("finalScore").textContent = score;
+    document.getElementById("finalTime").textContent = totalTime;
+  }
+
+  // 점수 전송
+  function sendScore() {
+    const name = document.getElementById("playerName").value.trim();
+    saveData("분모가 다른 분수끼리의 나눗셈", name, score, totalTime);
+  }
+
+  // 배열 무작위 셔플
+  function shuffleArray(array) {
+    for(let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+  }
+</script>
+
+</body>
+</html>
